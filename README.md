@@ -1,5 +1,11 @@
 # description
 
+## deep image prior (2018)
+
+- [https://dmitryulyanov.github.io/deep_image_prior](https://dmitryulyanov.github.io/deep_image_prior)
+- [https://github.com/dmitryulyanov/deep-image-prior](https://github.com/dmitryulyanov/deep-image-prior)
+- [https://arxiv.org/abs/1711.10925](https://arxiv.org/abs/1711.10925)
+
 ## install & use
 
 ```shell
@@ -8,13 +14,9 @@ make conda-install
 make conda-setup
 
 # install dependencies
-make env-init-conda
-make env-init-poetry
+make env-create
+make env-poetry-install
 
 # train
-make train
+make train-reset
 ```
-
-## datasets
-
-- https://huggingface.co/datasets/huggan/metfaces

@@ -34,6 +34,7 @@ class DipModelConfig:
     channels_skip: tuple[int, ...] = dataclasses.field(default=(4, 4, 4, 4, 4))
 
 
+# noinspection PyOverrides
 class DipDownBlock(torch.nn.Module):
     """
     single encoder (downsampling) level of the hourglass network.
@@ -114,6 +115,7 @@ class DipDownBlock(torch.nn.Module):
         return result
 
 
+# noinspection PyOverrides
 class DipSkipBlock(torch.nn.Module):
     """
     skip connection block of the hourglass network.
@@ -170,6 +172,7 @@ class DipSkipBlock(torch.nn.Module):
         return result
 
 
+# noinspection PyOverrides
 class DipUpBlock(torch.nn.Module):
     """
     single decoder (upsampling) level of the hourglass network.
@@ -277,6 +280,7 @@ class DipUpBlock(torch.nn.Module):
         return result
 
 
+# noinspection PyOverrides
 class DipModel(torch.nn.Module):
     """
     Deep Image Prior hourglass network.
