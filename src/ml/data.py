@@ -107,7 +107,7 @@ class DipDataModule(pl.LightningDataModule):
     """
 
     # pseudo-dataset size, the number of iterations per pseudo-epoch
-    BATCH_SIZE: t.Final[int] = 2
+    BATCH_SIZE: t.Final[int] = 32
 
     def __init__(
         self,

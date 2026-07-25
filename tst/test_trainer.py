@@ -40,6 +40,13 @@ def module_config() -> DipModelModuleConfig:
     return DipModelModuleConfig(learning_rate=1e-2)
 
 
+def make_mask(width: int, height: int) -> PIL.Image.Image:
+    # a binary mask (mode '1') of the given size that excludes a small corner square
+    array = numpy.ones(shape=(height, width), dtype='uint8')
+    array[:8, :8] = 0
+    return PIL.Image.fromarray(array * 255, mode='L').convert('1')
+
+
 @pytest.fixture
 def image() -> PIL.Image.Image:
     # a deterministic synthetic RGB image as the reconstruction target
@@ -49,8 +56,14 @@ def image() -> PIL.Image.Image:
 
 
 @pytest.fixture
+def mask() -> PIL.Image.Image:
+    return make_mask(IMAGE_WIDTH, IMAGE_HEIGHT)
+
+
+@pytest.fixture
 def trainer(
     image: PIL.Image.Image,
+    mask: PIL.Image.Image,
     module_config: DipModelModuleConfig,
     model_config: DipModelConfig,
     tmp_path: pathlib.Path,
@@ -64,12 +77,11 @@ def trainer(
     # redirect all artifacts into the pytest temporary folder (auto-cleaned by pytest)
     return DipTrainer(
         image=image,
+        mask=mask,
         module_config=module_config,
         model_config=model_config,
         work_folder_path=tmp_path,
     )
-    assert trainer is not None
-    assert isinstance(trainer, DipTrainer)
 
 
 def test_trainer_converts_image_to_tensor(trainer: DipTrainer) -> None:
@@ -102,6 +114,7 @@ def test_trainer_converts_non_rgb_image(
 
     built = DipTrainer(
         image=grayscale,
+        mask=make_mask(IMAGE_WIDTH, IMAGE_HEIGHT),
         module_config=module_config,
         model_config=model_config,
         work_folder_path=tmp_path,
@@ -127,6 +140,7 @@ def test_process_image_crops_to_divisible_size(
 
     built = DipTrainer(
         image=raw_image,
+        mask=make_mask(raw_width, raw_height),
         module_config=module_config,
         model_config=model_config,
         work_folder_path=tmp_path,
@@ -152,6 +166,7 @@ def test_process_image_downscales_large_image(
 
     built = DipTrainer(
         image=raw_image,
+        mask=make_mask(raw_width, raw_height),
         module_config=module_config,
         model_config=model_config,
         work_folder_path=tmp_path,
@@ -177,6 +192,7 @@ def test_process_image_keeps_small_image_untouched(
 
     built = DipTrainer(
         image=raw_image,
+        mask=make_mask(raw_width, raw_height),
         module_config=module_config,
         model_config=model_config,
         work_folder_path=tmp_path,
@@ -197,6 +213,7 @@ def test_process_image_saves_processed_original(
 
     built = DipTrainer(
         image=raw_image,
+        mask=make_mask(100, 70),
         module_config=module_config,
         model_config=model_config,
         work_folder_path=tmp_path,

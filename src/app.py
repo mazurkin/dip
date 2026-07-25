@@ -83,6 +83,14 @@ class Application:
             category=UserWarning,
         )
 
+        # avoid the num_workers bottleneck warning: the DIP data loaders intentionally use num_workers=0
+        # because the pseudo-dataset just returns a single pre-allocated tensor, so extra workers are useless
+        warnings.filterwarnings(
+            action='ignore',
+            message=r'The .* does not have many workers which may be a bottleneck\..*',
+            category=UserWarning,
+        )
+
     @argh.arg('image_path', help='path to the image file to reconstruct')
     @argh.arg('mask_path', help='path to the mask file to be used for reconstruction')
     def train(
@@ -107,6 +115,10 @@ class Application:
         # load the mask
         with PIL.Image.open(mask_file_path) as image_file:
             mask: PIL.Image.Image = image_file.convert('1')
+
+        # the image and the mask must describe the very same pixels, so their sizes have to match
+        assert image.size == mask.size, \
+            f'image size {image.size} does not match mask size {mask.size}'
 
         trainer: ml.trainer.DipTrainer = ml.trainer.DipTrainer(
             image=image,

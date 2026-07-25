@@ -105,13 +105,33 @@ class DipTrainer:
         # target image
         # ----------------------------------------------------------------------
 
-        # crop the image so its size fits the network, then keep the processed original for reference
-        self.image: t.Final[PIL.Image.Image] = self.process_image(image)
+        # the image and the mask must originally describe the same pixels, so their sizes have to match
+        assert image.size == mask.size, f'image size {image.size} does not match mask size {mask.size}'
 
-        # save the processed original next to the reconstructions for later comparison / blending
+        # crop the image so its size fits the network, then keep the processed original for reference
+        self.image: t.Final[PIL.Image.Image] = self.process_image(
+            image,
+            mode='RGB',
+            resample=PIL.Image.Resampling.LANCZOS,
+        )
+
+        # process the mask with the very same geometry, but as a single-channel image and with nearest
+        # neighbour resampling so the mask stays strictly binary (no interpolated grey values on the edges)
+        self.mask: t.Final[PIL.Image.Image] = self.process_image(
+            mask,
+            mode='L',
+            resample=PIL.Image.Resampling.NEAREST,
+        )
+        assert self.image.size == self.mask.size, 'the processed image and mask must have the same size'
+
+        # save the processed original and mask next to the reconstructions for later comparison / blending
         processed_image_path: pathlib.Path = self.output_folder_path / 'original.png'
         self.image.save(processed_image_path)
         self.logging.info('saved processed original: %s', processed_image_path)
+
+        processed_mask_path: pathlib.Path = self.output_folder_path / 'mask.png'
+        self.mask.save(processed_mask_path)
+        self.logging.info('saved processed mask: %s', processed_mask_path)
 
         # convert the processed Pillow image to an RGB tensor of shape (channels, height, width) in the
         # range [0, 1]; the tensor stays on the cpu and is moved to the accelerator by Lightning as a buffer
@@ -119,6 +139,11 @@ class DipTrainer:
 
         channels, self.image_height, self.image_width = self.image_tensor.shape  # type: int, int, int
         assert torch.Size([self.IMAGE_CHANNELS, self.image_height, self.image_width]) == self.image_tensor.shape
+
+        # convert the processed mask to a single-channel float tensor of shape (1, height, width) with
+        # values in {0, 1}; 1 marks the pixels to keep, 0 marks the region the network must inpaint
+        self.mask_tensor: t.Final[torch.Tensor] = torchvision.transforms.functional.to_tensor(self.mask)
+        assert torch.Size([1, self.image_height, self.image_width]) == self.mask_tensor.shape
 
         self.logging.info('target image: %d x %d (RGB)', self.image_width, self.image_height)
 
@@ -140,6 +165,7 @@ class DipTrainer:
 
         self.model_module: t.Final[DipModelModule] = DipModelModule(
             image=self.image_tensor,
+            mask=self.mask_tensor,
             config=self.module_config,
             model_config=self.model_config,
             output_dir=self.output_folder_path,
@@ -225,19 +251,27 @@ class DipTrainer:
             ],
         )
 
-    def process_image(self, image: PIL.Image.Image) -> PIL.Image.Image:
+    def process_image(
+        self,
+        image: PIL.Image.Image,
+        mode: str = 'RGB',
+        resample: PIL.Image.Resampling = PIL.Image.Resampling.LANCZOS,
+    ) -> PIL.Image.Image:
         """
-        prepare the target image for the network and save the processed original for later reference.
+        prepare a target image or mask for the network, keeping the same geometry for both.
 
-        The method converts the image to RGB, then applies two geometric steps:
+        The method converts the image to the requested color mode, then applies two geometric steps:
           1. downscaling (keeping the aspect ratio) so it fits inside `MAX_WIDTH` x `MAX_HEIGHT`, which
              bounds the memory footprint and avoids GPU out-of-memory errors on large inputs;
           2. center-cropping to the largest size whose width and height are both divisible by 2 ** depth,
              because the hourglass network halves the spatial resolution at every level.
-        It is a pure function with no side effects.
+        It is a pure function with no side effects. The image and the mask must have the same original
+        size, so applying this method to both produces perfectly aligned results.
 
-        :param image: the raw target image
-        :return: the processed RGB image with a network-compatible size
+        :param image: the raw image (either the target picture or the mask)
+        :param mode: Pillow color mode the image is converted to ('RGB' for the picture, 'L' for the mask)
+        :param resample: resampling filter used for downscaling (LANCZOS for the picture, NEAREST for masks)
+        :return: the processed image with a network-compatible size
         """
         # the network halves the resolution once per level, so the size must be a multiple of 2 ** depth
         depth: int = len(self.model_config.channels_down)
@@ -250,28 +284,28 @@ class DipTrainer:
         assert max_width > 0, f'MAX_WIDTH {self.MAX_WIDTH} is smaller than {resolution_divisor}'
         assert max_height > 0, f'MAX_HEIGHT {self.MAX_HEIGHT} is smaller than {resolution_divisor}'
 
-        # make sure the image is RGB before any geometric processing
-        rgb_image: PIL.Image.Image = image.convert('RGB')
+        # convert to the requested color mode before any geometric processing
+        converted_image: PIL.Image.Image = image.convert(mode)
 
         # downscale (never upscale) so the image fits inside the maximum box while keeping the aspect ratio;
         # `scale` is the single factor that brings both dimensions within their limits at once
         scale: float = min(
             1.0,
-            max_width / rgb_image.width,
-            max_height / rgb_image.height,
+            max_width / converted_image.width,
+            max_height / converted_image.height,
         )
 
-        scaled_image: PIL.Image.Image = rgb_image
+        scaled_image: PIL.Image.Image = converted_image
         if scale < 1.0:
-            scaled_width: int = int(rgb_image.width * scale)
-            scaled_height: int = int(rgb_image.height * scale)
-            scaled_image = rgb_image.resize(
+            scaled_width: int = int(converted_image.width * scale)
+            scaled_height: int = int(converted_image.height * scale)
+            scaled_image = converted_image.resize(
                 size=(scaled_width, scaled_height),
-                resample=PIL.Image.Resampling.LANCZOS,
+                resample=resample,
             )
             self.logging.info(
                 'processed image: downscaled from %d x %d to %d x %d (max %d x %d)',
-                rgb_image.width, rgb_image.height, scaled_width, scaled_height,
+                converted_image.width, converted_image.height, scaled_width, scaled_height,
                 self.MAX_WIDTH, self.MAX_HEIGHT,
             )
 

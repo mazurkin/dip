@@ -54,14 +54,24 @@ def target_image() -> torch.Tensor:
 
 
 @pytest.fixture
+def mask() -> torch.Tensor:
+    # a binary mask that keeps the whole image except a small excluded square in the corner
+    mask = torch.ones(size=(1, IMAGE_HEIGHT, IMAGE_WIDTH), device=DEVICE)
+    mask[:, :8, :8] = 0.0
+    return mask
+
+
+@pytest.fixture
 def module(
     target_image: torch.Tensor,
+    mask: torch.Tensor,
     module_config: DipModelModuleConfig,
     model_config: DipModelConfig,
 ) -> DipModelModule:
     torch.manual_seed(0)
     return DipModelModule(
         image=target_image,
+        mask=mask,
         config=module_config,
         model_config=model_config,
     )
@@ -88,14 +98,22 @@ def test_module_geometry_matches_image(module: DipModelModule) -> None:
     assert module.image_width == IMAGE_WIDTH
 
 
+def test_module_stores_mask_as_buffer(module: DipModelModule, mask: torch.Tensor) -> None:
+    # the mask must be registered as a non-trainable buffer, not as a parameter
+    buffer_names = {name for name, _ in module.named_buffers()}
+    assert 'mask' in buffer_names
+    assert torch.equal(module.mask, mask)
+
+
 def test_module_rejects_wrong_channel_count(
+    mask: torch.Tensor,
     module_config: DipModelModuleConfig,
     model_config: DipModelConfig,
 ) -> None:
     # a grayscale (single channel) image must be rejected as the module expects RGB
     grayscale = torch.rand(size=(1, IMAGE_HEIGHT, IMAGE_WIDTH), device=DEVICE)
     with pytest.raises(AssertionError):
-        DipModelModule(image=grayscale, config=module_config, model_config=model_config)
+        DipModelModule(image=grayscale, mask=mask, config=module_config, model_config=model_config)
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +138,39 @@ def test_configure_optimizers(module: DipModelModule, module_config: DipModelMod
 
     assert isinstance(optimizer, torch.optim.Adam)
     assert optimizer.defaults['lr'] == module_config.learning_rate
+
+
+# ---------------------------------------------------------------------------
+# masked loss
+# ---------------------------------------------------------------------------
+
+def test_masked_loss_ignores_excluded_pixels(
+    target_image: torch.Tensor,
+    mask: torch.Tensor,
+    module_config: DipModelModuleConfig,
+    model_config: DipModelConfig,
+) -> None:
+    torch.manual_seed(0)
+    module = DipModelModule(
+        image=target_image,
+        mask=mask,
+        config=module_config,
+        model_config=model_config,
+    )
+
+    # an output that equals the target everywhere yields zero loss
+    exact_output = target_image.clone()
+    assert module.masked_loss(exact_output).item() == pytest.approx(0.0)
+
+    # changing only the excluded pixels (mask == 0) must NOT affect the masked loss
+    corrupted_output = target_image.clone()
+    corrupted_output[:, :8, :8] = 1.0 - corrupted_output[:, :8, :8]
+    assert module.masked_loss(corrupted_output).item() == pytest.approx(0.0)
+
+    # changing a kept pixel (mask == 1) MUST increase the loss above zero
+    kept_corrupted = target_image.clone()
+    kept_corrupted[:, -1, -1] = 1.0 - kept_corrupted[:, -1, -1]
+    assert module.masked_loss(kept_corrupted).item() > 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +205,7 @@ def test_validation_step_stores_latest_output(module: DipModelModule) -> None:
 
 def test_fit_reduces_loss_and_saves_images(
     target_image: torch.Tensor,
+    mask: torch.Tensor,
     module_config: DipModelModuleConfig,
     model_config: DipModelConfig,
     tmp_path: pathlib.Path,
@@ -162,6 +214,7 @@ def test_fit_reduces_loss_and_saves_images(
 
     module = DipModelModule(
         image=target_image,
+        mask=mask,
         config=module_config,
         model_config=model_config,
         output_dir=tmp_path,
@@ -188,6 +241,7 @@ def test_fit_reduces_loss_and_saves_images(
 
 def test_no_images_saved_without_output_dir(
     target_image: torch.Tensor,
+    mask: torch.Tensor,
     module_config: DipModelModuleConfig,
     model_config: DipModelConfig,
 ) -> None:
@@ -195,6 +249,7 @@ def test_no_images_saved_without_output_dir(
 
     module = DipModelModule(
         image=target_image,
+        mask=mask,
         config=module_config,
         model_config=model_config,
         output_dir=None,
